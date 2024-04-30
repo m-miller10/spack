@@ -1719,10 +1719,10 @@ class PackageBase(WindowsRPath, PackageViewMixin, RedistributionMixin, metaclass
                 env = spack.environment.active_environment()
                 from_local_sources = env and env.is_develop(self.spec)
 
-                # don't bother setting a source id if none is available, but warn if
+                # don't bother setting a hash if none is available, but warn if
                 # it seems like there should be one.
                 if self.has_code and not self.spec.external and not from_local_sources:
-                    message = "Missing a source id for {s.name}@{s.version}"
+                    message = "Missing a hash for {s.name}@{s.version}"
                     tty.debug(message.format(s=self))
 
             for resource in self._get_needed_resources():
