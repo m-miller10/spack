@@ -204,10 +204,12 @@ def test_satisfy_strict_constraint_when_not_concrete(architecture_tuple, constra
 def test_concretize_target_ranges(root_target_range, dep_target_range, result, monkeypatch):
     # Monkeypatch so that all concretization is done as if the machine is core2
     monkeypatch.setattr(spack.platforms.test.Test, "default", "core2")
-    spec = Spec(f"a %gcc@10 foobar=bar target={root_target_range} ^b target={dep_target_range}")
+    spec = Spec(
+        f"pkg-a %gcc@10 foobar=bar target={root_target_range} ^pkg-b target={dep_target_range}"
+    )
     with spack.concretize.disable_compiler_existence_check():
         spec.concretize()
-    assert spec.target == spec["b"].target == result
+    assert spec.target == spec["pkg-b"].target == result
 
 
 @pytest.mark.parametrize(
