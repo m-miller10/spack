@@ -2117,10 +2117,7 @@ class Spec:
         if self.namespace:
             d["namespace"] = self.namespace
 
-        # Get all variants *except* for patches.  Patches are included in "artifacts" below.
-        params = syaml.syaml_dict(
-            sorted(v.yaml_entry() for _, v in self.variants.items() if v.name != "patches")
-        )
+        params = syaml.syaml_dict(sorted(v.yaml_entry() for _, v in self.variants.items()))
 
         # Only need the string compiler flag for yaml file
         params.update(
@@ -2144,6 +2141,11 @@ class Spec:
 
         if not self._concrete:
             d["concrete"] = False
+
+        if "patches" in self.variants:
+            variant = self.variants["patches"]
+            if hasattr(variant, "_patches_in_order_of_appearance"):
+                d["patches"] = variant._patches_in_order_of_appearance
 
         if self._concrete and hash.package_hash:
             # We use the `_package_hash` attribute here instead of `self.package_hash()`
