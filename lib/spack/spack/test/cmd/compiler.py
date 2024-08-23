@@ -152,7 +152,7 @@ def test_compiler_find_mixed_suffixes(
     assert "clang@11.0.0" in output
     assert "gcc@8.4.0" in output
 
-    config = spack.compilers.get_compiler_config(
+    config = spack.compilers.all_compilers_config(
         no_compilers_yaml, scope="site", init_config=False
     )
     clang = next(c["compiler"] for c in config if c["compiler"]["spec"] == "clang@=11.0.0")
@@ -189,10 +189,12 @@ def test_compiler_find_prefer_no_suffix(no_compilers_yaml, working_env, compiler
     assert "clang@11.0.0" in output
     assert "gcc@8.4.0" in output
 
-    config = spack.compilers.get_compiler_config(
-        no_compilers_yaml, scope="site", init_config=False
+    compiler_config = spack.compilers.get_compiler_config_from_packages(
+        no_compilers_yaml, scope="site"
     )
-    clang = next(c["compiler"] for c in config if c["compiler"]["spec"] == "clang@=11.0.0")
+    clang = next(
+        c["compiler"] for c in compiler_config if c["compiler"]["spec"] == "clang@=11.0.0"
+    )
 
     assert clang["paths"]["cc"] == str(compilers_dir / "clang")
     assert clang["paths"]["cxx"] == str(compilers_dir / "clang++")
@@ -210,10 +212,10 @@ def test_compiler_find_path_order(no_compilers_yaml, working_env, compilers_dir)
 
     compiler("find", "--scope=site")
 
-    config = spack.compilers.get_compiler_config(
-        no_compilers_yaml, scope="site", init_config=False
+    compiler_config = spack.compilers.get_compiler_config_from_packages(
+        no_compilers_yaml, scope="site"
     )
-    gcc = next(c["compiler"] for c in config if c["compiler"]["spec"] == "gcc@=8.4.0")
+    gcc = next(c["compiler"] for c in compiler_config if c["compiler"]["spec"] == "gcc@=8.4.0")
     assert gcc["paths"] == {
         "cc": str(new_dir / "gcc-8"),
         "cxx": str(new_dir / "g++-8"),

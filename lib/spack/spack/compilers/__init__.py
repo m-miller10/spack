@@ -2,15 +2,15 @@
 # Spack Project Developers. See the top-level COPYRIGHT file for details.
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
-
-"""This module contains functions related to finding compilers on the
-system and configuring Spack to use multiple compilers.
+"""This module contains functions related to finding compilers on the system,
+and configuring Spack to use multiple compilers.
 """
 import importlib
 import os
+import re
 import sys
 import warnings
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import archspec.cpu
 
@@ -43,14 +43,6 @@ _other_instance_vars = [
 #: cache of compilers constructed from config data, keyed by config entry id.
 _compiler_cache: Dict[str, "spack.compiler.Compiler"] = {}
 
-_compiler_to_pkg = {
-    "clang": "llvm+clang",
-    "oneapi": "intel-oneapi-compilers",
-    "rocmcc": "llvm-amdgpu",
-    "intel@2020:": "intel-oneapi-compilers-classic",
-    "arm": "acfl",
-}
-
 # TODO: generating this from the previous dict causes docs errors
 package_name_to_compiler_name = {
     "llvm": "clang",
@@ -65,99 +57,74 @@ package_name_to_compiler_name = {
 COMPILER_TAG = "compiler"
 
 
-def pkg_spec_for_compiler(cspec):
-    """Return the spec of the package that provides the compiler."""
-    for spec, package in _compiler_to_pkg.items():
-        if cspec.satisfies(spec):
-            spec_str = "%s@%s" % (package, cspec.versions)
-            break
-    else:
-        spec_str = str(cspec)
-    return spack.spec.parse_with_version_concrete(spec_str)
-
-
 def _auto_compiler_spec(function):
-    def converter(cspec_like, *args, **kwargs):
-        if not isinstance(cspec_like, spack.spec.Spec):
-            cspec_like = spack.spec.Spec(cspec_like)
-        return function(cspec_like, *args, **kwargs)
+    def converter(spec_like, *args, **kwargs):
+        if not isinstance(spec_like, spack.spec.Spec):
+            spec_like = spack.spec.Spec(spec_like)
+        return function(spec_like, *args, **kwargs)
 
     return converter
 
 
-def _to_dict(compiler):
-    """Return a dict version of compiler suitable to insert in YAML."""
-    return {"compiler": compiler.to_dict()}
-
-
 def get_compiler_config(
-    configuration: "spack.config.Configuration",
-    *,
-    scope: Optional[str] = None,
-    init_config: bool = False,
+    configuration: "spack.config.ConfigurationType", *, scope: Optional[str] = None
 ) -> List[Dict]:
     """Return the compiler configuration for the specified architecture."""
-    config = configuration.get("compilers", scope=scope) or []
-    if config or not init_config:
-        return config
-
-    merged_config = configuration.get("compilers")
-    if merged_config:
-        # Config is empty for this scope
-        # Do not init config because there is a non-empty scope
-        return config
-
-    find_compilers(scope=scope)
-    config = configuration.get("compilers", scope=scope)
-    return config
+    compilers_yaml = configuration.get("compilers", scope=scope)
+    if not compilers_yaml:
+        return []
+    return compilers_yaml
 
 
 def get_compiler_config_from_packages(
-    configuration: "spack.config.Configuration", *, scope: Optional[str] = None
-) -> List[Dict]:
+    configuration: "spack.config.ConfigurationType",
+    *,
+    scope: Optional[str] = None,
+    init_config: bool = False,
+):
     """Return the compiler configuration from packages.yaml"""
+    packages_yaml = configuration.get("packages", scope=scope)
+    configs = CompilerConfigFactory.from_packages_yaml(packages_yaml)
+    if configs or not init_config:
+        return configs
+
+    merged_packages_yaml = configuration.get("packages")
+    configs = CompilerConfigFactory.from_packages_yaml(merged_packages_yaml)
+    if configs:
+        # Config is empty for this scope
+        # Do not init config because there is a non-empty scope
+        return configs
+
+    find_compilers(scope=scope)
     packages_yaml = configuration.get("packages", scope=scope)
     return CompilerConfigFactory.from_packages_yaml(packages_yaml)
 
 
 def compiler_config_files():
-    config_files = list()
-    config = spack.config.CONFIG
-    for scope in config.writable_scopes:
+    config_files = []
+    configuration = spack.config.CONFIG
+    for scope in configuration.writable_scopes:
         name = scope.name
-        compiler_config = config.get("compilers", scope=name)
+
+        from_packages_yaml = get_compiler_config_from_packages(configuration, scope=name)
+        if from_packages_yaml:
+            config_files.append(configuration.get_config_filename(name, "packages"))
+
+        compiler_config = configuration.get("compilers", scope=name)
         if compiler_config:
-            config_files.append(config.get_config_filename(name, "compilers"))
-        compiler_config_from_packages = get_compiler_config_from_packages(config, scope=name)
-        if compiler_config_from_packages:
-            config_files.append(config.get_config_filename(name, "packages"))
+            config_files.append(configuration.get_config_filename(name, "compilers"))
+
     return config_files
 
 
-def add_compilers_to_config(compilers, scope=None):
-    """Add compilers to the config for the specified architecture.
-
-    Arguments:
-        compilers: a list of Compiler objects.
-        scope: configuration scope to modify.
-    """
-    compiler_config = get_compiler_config(configuration=spack.config.CONFIG, scope=scope)
-    for compiler in compilers:
-        if not compiler.cc:
-            tty.debug(f"{compiler.spec} does not have a C compiler")
-        if not compiler.cxx:
-            tty.debug(f"{compiler.spec} does not have a C++ compiler")
-        if not compiler.f77:
-            tty.debug(f"{compiler.spec} does not have a Fortran77 compiler")
-        if not compiler.fc:
-            tty.debug(f"{compiler.spec} does not have a Fortran compiler")
-        compiler_config.append(_to_dict(compiler))
-    spack.config.set("compilers", compiler_config, scope=scope)
+def add_compiler_to_config(compiler, scope=None) -> None:
+    """Add a Compiler object to the configuration, at the required scope."""
+    # FIXME (compiler as nodes): still needed to read Cray manifest
+    raise NotImplementedError("'add_compiler_to_config' node implemented yet.")
 
 
-@_auto_compiler_spec
-def remove_compiler_from_config(compiler_spec, scope=None):
-    """Remove compilers from configuration by spec.
+def remove_compiler_from_config(compiler_spec: str, scope: Optional[str] = None) -> bool:
+    """Remove compilers from the global configuration by spec.
 
     If scope is None, all the scopes are searched for removal.
 
@@ -165,52 +132,14 @@ def remove_compiler_from_config(compiler_spec, scope=None):
         compiler_spec: compiler to be removed
         scope: configuration scope to modify
     """
-    candidate_scopes = [scope]
-    if scope is None:
-        candidate_scopes = spack.config.CONFIG.scopes.keys()
-
-    removal_happened = False
-    for current_scope in candidate_scopes:
-        removal_happened |= _remove_compiler_from_scope(compiler_spec, scope=current_scope)
-
-    msg = "`spack compiler remove` will not remove compilers defined in packages.yaml"
-    msg += "\nTo remove these compilers, either edit the config or use `spack external remove`"
-    tty.debug(msg)
-    return removal_happened
-
-
-def _remove_compiler_from_scope(compiler_spec, scope):
-    """Removes a compiler from a specific configuration scope.
-
-    Args:
-        compiler_spec: compiler to be removed
-        scope: configuration scope under consideration
-
-    Returns:
-         True if one or more compiler entries were actually removed, False otherwise
-    """
-    assert scope is not None, "a specific scope is needed when calling this function"
-    compiler_config = get_compiler_config(configuration=spack.config.CONFIG, scope=scope)
-    filtered_compiler_config = [
-        compiler_entry
-        for compiler_entry in compiler_config
-        if not spack.spec.parse_with_version_concrete(
-            compiler_entry["compiler"]["spec"], compiler=True
-        ).satisfies(compiler_spec)
-    ]
-
-    if len(filtered_compiler_config) == len(compiler_config):
-        return False
-
-    # We need to preserve the YAML type for comments, hence we are copying the
-    # items in the list that has just been retrieved
-    compiler_config[:] = filtered_compiler_config
-    spack.config.CONFIG.set("compilers", compiler_config, scope=scope)
-    return True
+    remover = spack.compilers.CompilerRemover(spack.config.CONFIG)
+    removed = remover.mark_compilers(match=compiler_spec, scope=scope)
+    remover.flush()
+    return bool(removed)
 
 
 def all_compilers_config(
-    configuration: "spack.config.Configuration",
+    configuration: "spack.config.ConfigurationType",
     *,
     scope: Optional[str] = None,
     init_config: bool = True,
@@ -218,10 +147,16 @@ def all_compilers_config(
     """Return a set of specs for all the compiler versions currently
     available to build with.  These are instances of CompilerSpec.
     """
-    from_packages_yaml = get_compiler_config_from_packages(configuration, scope=scope)
-    if from_packages_yaml:
-        init_config = False
-    from_compilers_yaml = get_compiler_config(configuration, scope=scope, init_config=init_config)
+    if os.environ.get("SPACK_EXPERIMENTAL_DEPRECATE_COMPILERS_YAML") == "1":
+        from_compilers_yaml = []
+    else:
+        from_compilers_yaml = get_compiler_config(configuration, scope=scope)
+        if from_compilers_yaml:
+            init_config = False
+
+    from_packages_yaml = get_compiler_config_from_packages(
+        configuration, scope=scope, init_config=init_config
+    )
 
     result = from_compilers_yaml + from_packages_yaml
     # Dedupe entries by the compiler they represent
@@ -230,21 +165,12 @@ def all_compilers_config(
     return list(llnl.util.lang.dedupe(result, key=key))
 
 
-def all_compiler_specs(scope=None, init_config=True):
-    # Return compiler specs from the merged config.
-    return [
-        spack.spec.parse_with_version_concrete(s["compiler"]["spec"])
-        for s in all_compilers_config(spack.config.CONFIG, scope=scope, init_config=init_config)
-    ]
-
-
 def find_compilers(
     path_hints: Optional[List[str]] = None,
     *,
     scope: Optional[str] = None,
-    mixed_toolchain: bool = False,
     max_workers: Optional[int] = None,
-) -> List["spack.compiler.Compiler"]:
+) -> List["spack.spec.Spec"]:
     """Searches for compiler in the paths given as argument. If any new compiler is found, the
     configuration is updated, and the list of new compiler objects is returned.
 
@@ -252,14 +178,8 @@ def find_compilers(
         path_hints: list of path hints where to look for. A sensible default based on the ``PATH``
             environment variable will be used if the value is None
         scope: configuration scope to modify
-        mixed_toolchain: allow mixing compilers from different toolchains if otherwise missing for
-            a certain language
         max_workers: number of processes used to search for compilers
     """
-    import spack.detection
-
-    known_compilers = set(all_compilers(init_config=False))
-
     if path_hints is None:
         path_hints = get_path("PATH")
     default_paths = fs.search_paths_for_executables(*path_hints)
@@ -271,44 +191,9 @@ def find_compilers(
         compiler_pkgs, path_hints=default_paths, max_workers=max_workers
     )
 
-    valid_compilers = {}
-    for name, detected in detected_packages.items():
-        compilers = [x for x in detected if CompilerConfigFactory.from_external_spec(x.spec)]
-        if not compilers:
-            continue
-        valid_compilers[name] = compilers
-
-    def _has_fortran_compilers(x):
-        if "compilers" not in x.spec.extra_attributes:
-            return False
-
-        return "fortran" in x.spec.extra_attributes["compilers"]
-
-    if mixed_toolchain:
-        gccs = [x for x in valid_compilers.get("gcc", []) if _has_fortran_compilers(x)]
-        if gccs:
-            best_gcc = sorted(
-                gccs, key=lambda x: spack.spec.parse_with_version_concrete(x.spec).version
-            )[-1]
-            gfortran = best_gcc.spec.extra_attributes["compilers"]["fortran"]
-            for name in ("llvm", "apple-clang"):
-                if name not in valid_compilers:
-                    continue
-                candidates = valid_compilers[name]
-                for candidate in candidates:
-                    if _has_fortran_compilers(candidate):
-                        continue
-                    candidate.spec.extra_attributes["compilers"]["fortran"] = gfortran
-
-    new_compilers = []
-    for name, detected in valid_compilers.items():
-        for config in CompilerConfigFactory.from_specs([x.spec for x in detected]):
-            c = _compiler_from_config_entry(config["compiler"])
-            if c in known_compilers:
-                continue
-            new_compilers.append(c)
-
-    add_compilers_to_config(new_compilers, scope=scope)
+    new_compilers = spack.detection.update_configuration(
+        detected_packages, buildable=True, scope=scope
+    )
     return new_compilers
 
 
@@ -384,7 +269,7 @@ def supported(compiler_spec):
 def find(compiler_spec, scope=None, init_config=True):
     """Return specs of available compilers that match the supplied
     compiler spec.  Return an empty list if nothing found."""
-    return [c for c in all_compiler_specs(scope, init_config) if c.satisfies(compiler_spec)]
+    return [c for c in all_compilers(scope, init_config) if c.satisfies(compiler_spec)]
 
 
 @_auto_compiler_spec
@@ -399,22 +284,199 @@ def find_specs_by_arch(compiler_spec, arch_spec, scope=None, init_config=True):
     ]
 
 
-def all_compilers(scope=None, init_config=True):
-    return all_compilers_from(
-        configuration=spack.config.CONFIG, scope=scope, init_config=init_config
-    )
+def all_compilers(
+    scope: Optional[str] = None, init_config: bool = True
+) -> List["spack.spec.Spec"]:
+    """Returns all the compilers from the current global configuration.
 
+    Args:
+        scope: configuration scope from which to extract the compilers. If None, the merged
+            configuration is used.
+        init_config: if True, search for compilers if none is found in configuration.
+    """
+    compilers = all_compilers_from(configuration=spack.config.CONFIG, scope=scope)
 
-def all_compilers_from(configuration, scope=None, init_config=True):
-    compilers = []
-    for items in all_compilers_config(
-        configuration=configuration, scope=scope, init_config=init_config
-    ):
-        items = items["compiler"]
-        compiler = _compiler_from_config_entry(items)  # can be None in error case
-        if compiler:
-            compilers.append(compiler)
+    if not compilers and init_config:
+        find_compilers(scope=scope)
+        compilers = all_compilers_from(configuration=spack.config.CONFIG, scope=scope)
+
     return compilers
+
+
+def all_compilers_from(
+    configuration: "spack.config.ConfigurationType", scope: Optional[str] = None
+) -> List["spack.spec.Spec"]:
+    """Returns all the compilers from the current global configuration.
+
+    Args:
+        configuration: configuration to be queried
+        scope: configuration scope from which to extract the compilers. If None, the merged
+            configuration is used.
+    """
+    compilers = []
+    compiler_package_names = supported_compilers() + list(package_name_to_compiler_name.keys())
+
+    # First, get the compilers from packages.yaml
+    packages_yaml = configuration.get("packages", scope=scope)
+    for name, entry in packages_yaml.items():
+        if name not in compiler_package_names:
+            continue
+
+        externals_config = entry.get("externals", None)
+        if not externals_config:
+            continue
+
+        compiler_specs = []
+        for current_external in externals_config:
+            compiler = CompilerConfigFactory._spec_from_external_config(current_external)
+            if compiler:
+                compiler_specs.append(compiler)
+
+        compilers.extend(compiler_specs)
+
+    if os.environ.get("SPACK_EXPERIMENTAL_DEPRECATE_COMPILERS_YAML") == "1":
+        return compilers
+
+    legacy_compilers = []
+    for item in configuration.get("compilers", scope=scope):
+        legacy_compilers.extend(_externals_from_legacy_compiler(item["compiler"]))
+
+    if legacy_compilers:
+        # FIXME (compiler as nodes): write how to update the file. Maybe an ad-hoc command
+        warnings.warn(
+            "Some compilers are still defined in 'compilers.yaml', which has been deprecated "
+            "in v0.23. Those configuration files will be ignored from Spack v0.25.\n"
+        )
+        for legacy in legacy_compilers:
+            if not any(c.satisfies(f"{legacy.name}@{legacy.versions}") for c in compilers):
+                compilers.append(legacy)
+
+    return compilers
+
+
+class CompilerRemover:
+    """Removes compiler from configuration."""
+
+    def __init__(self, configuration: "spack.config.ConfigurationType") -> None:
+        self.configuration = configuration
+        self.marked_packages_yaml: List[Tuple[str, Any]] = []
+        self.marked_compilers_yaml: List[Tuple[str, Any]] = []
+
+    def mark_compilers(
+        self, *, match: str, scope: Optional[str] = None
+    ) -> List["spack.spec.Spec"]:
+        """Marks compilers to be removed in configuration, and returns a corresponding list
+        of specs.
+
+        Args:
+            match: constraint that the compiler must match to be removed.
+            scope: scope where to remove the compiler. If None, all writeable scopes are checked.
+        """
+        self.marked_packages_yaml = []
+        self.marked_compilers_yaml = []
+        candidate_scopes = [scope]
+        if scope is None:
+            candidate_scopes = [x.name for x in self.configuration.writable_scopes]
+
+        all_removals = self._mark_in_packages_yaml(match, candidate_scopes)
+        all_removals.extend(self._mark_in_compilers_yaml(match, candidate_scopes))
+
+        return all_removals
+
+    def _mark_in_packages_yaml(self, match, candidate_scopes):
+        compiler_package_names = supported_compilers() + list(package_name_to_compiler_name.keys())
+        all_removals = []
+        for current_scope in candidate_scopes:
+            packages_yaml = self.configuration.get("packages", scope=current_scope)
+            if not packages_yaml:
+                continue
+
+            removed_from_scope = []
+            for name, entry in packages_yaml.items():
+                if name not in compiler_package_names:
+                    continue
+
+                externals_config = entry.get("externals", None)
+                if not externals_config:
+                    continue
+
+                def _partition_match(external_yaml):
+                    s = CompilerConfigFactory._spec_from_external_config(external_yaml)
+                    return not s.satisfies(match)
+
+                to_keep, to_remove = llnl.util.lang.stable_partition(
+                    externals_config, _partition_match
+                )
+                if not to_remove:
+                    continue
+
+                removed_from_scope.extend(to_remove)
+                entry["externals"] = to_keep
+
+            if not removed_from_scope:
+                continue
+
+            self.marked_packages_yaml.append((current_scope, packages_yaml))
+            all_removals.extend(
+                [CompilerConfigFactory._spec_from_external_config(x) for x in removed_from_scope]
+            )
+        return all_removals
+
+    def _mark_in_compilers_yaml(self, match, candidate_scopes):
+        if os.environ.get("SPACK_EXPERIMENTAL_DEPRECATE_COMPILERS_YAML") == "1":
+            return []
+
+        all_removals = []
+        for current_scope in candidate_scopes:
+            compilers_yaml = self.configuration.get("compilers", scope=current_scope)
+            if not compilers_yaml:
+                continue
+
+            def _partition_match(entry):
+                external_specs = _externals_from_legacy_compiler(entry["compiler"])
+                return not any(x.satisfies(match) for x in external_specs)
+
+            to_keep, to_remove = llnl.util.lang.stable_partition(compilers_yaml, _partition_match)
+            if not to_remove:
+                continue
+
+            compilers_yaml[:] = to_keep
+            self.marked_compilers_yaml.append((current_scope, compilers_yaml))
+            for entry in to_remove:
+                all_removals.extend(_externals_from_legacy_compiler(entry["compiler"]))
+
+        return all_removals
+
+    def flush(self):
+        """Removes from configuration the specs that have been marked by the previous call
+        of ``remove_compilers``.
+        """
+        for scope, packages_yaml in self.marked_packages_yaml:
+            self.configuration.set("packages", packages_yaml, scope=scope)
+
+        for scope, compilers_yaml in self.marked_compilers_yaml:
+            self.configuration.set("compilers", compilers_yaml, scope=scope)
+
+
+def _externals_from_legacy_compiler(compiler_dict: Dict[str, Any]) -> List["spack.spec.Spec"]:
+    """Returns a list of external specs, corresponding to a compiler entry from compilers.yaml."""
+    from spack.detection.path import ExecutablesFinder
+
+    result = []
+    candidate_paths = [x for x in compiler_dict["paths"].values() if x is not None]
+    finder = ExecutablesFinder()
+    for pkg_name in spack.repo.PATH.packages_with_tags("compiler"):
+        pkg_cls = spack.repo.PATH.get_pkg_class(pkg_name)
+        pattern = re.compile(r"|".join(finder.search_patterns(pkg=pkg_cls)))
+        filtered_paths = [x for x in candidate_paths if pattern.search(os.path.basename(x))]
+        detected = finder.detect_specs(pkg=pkg_cls, paths=filtered_paths)
+        if detected:
+            for item in detected:
+                spec, prefix = item.spec, item.prefix
+                spec.external_path = prefix
+                result.append(spec)
+
+    return result
 
 
 @_auto_compiler_spec
@@ -422,6 +484,7 @@ def compilers_for_spec(compiler_spec, *, arch_spec=None, scope=None, init_config
     """This gets all compilers that satisfy the supplied CompilerSpec.
     Returns an empty list if none are found.
     """
+
     config = all_compilers_config(spack.config.CONFIG, scope=scope, init_config=init_config)
     matches = set(find(compiler_spec, scope, init_config))
     compilers = []
@@ -431,12 +494,17 @@ def compilers_for_spec(compiler_spec, *, arch_spec=None, scope=None, init_config
 
 
 def compilers_for_arch(arch_spec, scope=None):
-    config = all_compilers_config(spack.config.CONFIG, scope=scope, init_config=False)
-    return list(get_compilers(config, arch_spec=arch_spec))
-
-
-def compiler_specs_for_arch(arch_spec, scope=None):
-    return [c.spec for c in compilers_for_arch(arch_spec, scope)]
+    # FIXME (compiler as nodes): this needs a better implementation
+    compilers = all_compilers_from(spack.config.CONFIG, scope=scope)
+    result = []
+    for candidate in compilers:
+        _, operating_system, target = name_os_target(candidate)
+        if not operating_system == str(arch_spec.os) or not target == str(
+            arch_spec.target.microarchitecture.family
+        ):
+            continue
+        result.append(candidate)
+    return result
 
 
 class CacheReference:
@@ -695,6 +763,10 @@ _C_KEY = "c"
 _CXX_KEY, _FORTRAN_KEY = "cxx", "fortran"
 
 
+def name_os_target(spec: "spack.spec.Spec") -> Tuple[str, str, str]:
+    return (spec.name,) + CompilerConfigFactory._extract_os_and_target(spec)
+
+
 class CompilerConfigFactory:
     """Class aggregating all ways of constructing a list of compiler config entries."""
 
@@ -714,7 +786,7 @@ class CompilerConfigFactory:
         return result
 
     @staticmethod
-    def from_packages_yaml(packages_yaml) -> List[dict]:
+    def from_packages_yaml(packages_yaml) -> List["spack.spec.Spec"]:
         compiler_specs = []
         compiler_package_names = supported_compilers() + list(package_name_to_compiler_name.keys())
         for name, entry in packages_yaml.items():
@@ -732,10 +804,10 @@ class CompilerConfigFactory:
                     current_specs.append(compiler)
             compiler_specs.extend(current_specs)
 
-        return CompilerConfigFactory.from_specs(compiler_specs)
+        return compiler_specs
 
     @staticmethod
-    def _spec_from_external_config(config):
+    def _spec_from_external_config(config) -> Optional["spack.spec.Spec"]:
         # Allow `@x.y.z` instead of `@=x.y.z`
         err_header = f"The external spec '{config['spec']}' cannot be used as a compiler"
         # If extra_attributes is not there I might not want to use this entry as a compiler,
@@ -746,6 +818,7 @@ class CompilerConfigFactory:
         extra_attributes = config[_EXTRA_ATTRIBUTES_KEY]
         result = spack.spec.Spec(
             str(spack.spec.parse_with_version_concrete(config["spec"])),
+            external_path=config.get("prefix"),
             external_modules=config.get("modules"),
         )
         result.extra_attributes = extra_attributes
@@ -835,7 +908,7 @@ class CompilerConfigFactory:
             if not operating_system:
                 host_platform = spack.platforms.host()
                 operating_system = host_platform.operating_system("default_os")
-        return operating_system, target
+        return str(operating_system), str(target.family)
 
 
 class InvalidCompilerConfigurationError(spack.error.SpackError):
