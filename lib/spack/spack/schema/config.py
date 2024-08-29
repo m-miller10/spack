@@ -75,7 +75,6 @@ properties: Dict[str, Any] = {
             "verify_ssl": {"type": "boolean"},
             "ssl_certs": {"type": "string"},
             "suppress_gpg_warnings": {"type": "boolean"},
-            "install_missing_compilers": {"type": "boolean"},
             "debug": {"type": "boolean"},
             "checksum": {"type": "boolean"},
             "deprecated": {"type": "boolean"},

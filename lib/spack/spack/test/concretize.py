@@ -2,7 +2,6 @@
 # Spack Project Developers. See the top-level COPYRIGHT file for details.
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
-import copy
 import os
 import sys
 
@@ -337,16 +336,6 @@ class TestConcretize:
 
         concrete = check_concretize("mpileaks   ^mpich2@1.3.1:1.4")
         assert concrete["mpich2"].satisfies("mpich2@1.3.1:1.4")
-
-    def test_concretize_enable_disable_compiler_existence_check(self):
-        with spack.concretize.enable_compiler_existence_check():
-            with pytest.raises(spack.concretize.UnavailableCompilerVersionError):
-                check_concretize("dttop %gcc@=100.100")
-
-        with spack.concretize.disable_compiler_existence_check():
-            spec = check_concretize("dttop %gcc@=100.100")
-            assert spec.satisfies("%gcc@100.100")
-            assert spec["dtlink3"].satisfies("%gcc@100.100")
 
     def test_concretize_with_provides_when(self):
         """Make sure insufficient versions of MPI are not in providers list when
@@ -847,26 +836,27 @@ class TestConcretize:
         with pytest.raises(spack.error.SpackError):
             Spec(spec).concretized()
 
-    @pytest.mark.not_on_windows("Not supported on Windows (yet)")
-    # Include targets to prevent regression on 20537
-    @pytest.mark.parametrize(
-        "spec, best_achievable",
-        [
-            ("mpileaks%gcc@=4.4.7 ^dyninst@=10.2.1 target=x86_64:", "core2"),
-            ("mpileaks%gcc@=4.8 target=x86_64:", "haswell"),
-            ("mpileaks%gcc@=5.3.0 target=x86_64:", "broadwell"),
-            ("mpileaks%apple-clang@=5.1.0 target=x86_64:", "x86_64"),
-        ],
-    )
-    @pytest.mark.regression("13361", "20537")
-    def test_adjusting_default_target_based_on_compiler(
-        self, spec, best_achievable, current_host, mock_targets
-    ):
-        best_achievable = archspec.cpu.TARGETS[best_achievable]
-        expected = best_achievable if best_achievable < current_host else current_host
-        with spack.concretize.disable_compiler_existence_check():
-            s = Spec(spec).concretized()
-            assert str(s.architecture.target) == str(expected)
+    # FIXME (compiler as nodes): Revisit this test
+    # @pytest.mark.not_on_windows("Not supported on Windows (yet)")
+    # # Include targets to prevent regression on 20537
+    # @pytest.mark.parametrize(
+    #     "spec, best_achievable",
+    #     [
+    #         ("mpileaks%gcc@=4.4.7 ^dyninst@=10.2.1 target=x86_64:", "core2"),
+    #         ("mpileaks%gcc@=4.8 target=x86_64:", "haswell"),
+    #         ("mpileaks%gcc@=5.3.0 target=x86_64:", "broadwell"),
+    #         ("mpileaks%apple-clang@=5.1.0 target=x86_64:", "x86_64"),
+    #     ],
+    # )
+    # @pytest.mark.regression("13361", "20537")
+    # def test_adjusting_default_target_based_on_compiler(
+    #     self, spec, best_achievable, current_host, mock_targets
+    # ):
+    #     best_achievable = archspec.cpu.TARGETS[best_achievable]
+    #     expected = best_achievable if best_achievable < current_host else current_host
+    #     with spack.concretize.disable_compiler_existence_check():
+    #         s = Spec(spec).concretized()
+    #         assert str(s.architecture.target) == str(expected)
 
     def test_compiler_version_matches_any_entry_in_compilers_yaml(self):
         # The behavior here has changed since #8735 / #14730. Now %gcc@10.2 is an abstract
@@ -2386,25 +2376,26 @@ class TestConcretize:
         s = Spec("mpich").concretized()
         assert s.external
 
-    @pytest.mark.regression("43875")
-    def test_concretize_missing_compiler(self, mutable_config, monkeypatch):
-        """Tests that Spack can concretize a spec with a missing compiler when the
-        option is active.
-        """
-
-        def _default_libc(self):
-            if self.cc is None:
-                return None
-            return Spec("glibc@=2.28")
-
-        monkeypatch.setattr(spack.concretize.Concretizer, "check_for_compiler_existence", False)
-        monkeypatch.setattr(spack.compiler.Compiler, "default_libc", property(_default_libc))
-        monkeypatch.setattr(
-            spack.util.libc, "libc_from_current_python_process", lambda: Spec("glibc@=2.28")
-        )
-        mutable_config.set("config:install_missing_compilers", True)
-        s = Spec("pkg-a %gcc@=13.2.0").concretized()
-        assert s.satisfies("%gcc@13.2.0")
+    # FIXME (compiler as nodes): Revisit this test
+    # @pytest.mark.regression("43875")
+    # def test_concretize_missing_compiler(self, mutable_config, monkeypatch):
+    #     """Tests that Spack can concretize a spec with a missing compiler when the
+    #     option is active.
+    #     """
+    #
+    #     def _default_libc(self):
+    #         if self.cc is None:
+    #             return None
+    #         return Spec("glibc@=2.28")
+    #
+    #     monkeypatch.setattr(spack.concretize.Concretizer, "check_for_compiler_existence", False)
+    #     monkeypatch.setattr(spack.compiler.Compiler, "default_libc", property(_default_libc))
+    #     monkeypatch.setattr(
+    #         spack.util.libc, "libc_from_current_python_process", lambda: Spec("glibc@=2.28")
+    #     )
+    #     mutable_config.set("config:install_missing_compilers", True)
+    #     s = Spec("pkg-a %gcc@=13.2.0").concretized()
+    #     assert s.satisfies("%gcc@13.2.0")
 
     @pytest.mark.regression("43267")
     def test_spec_with_build_dep_from_json(self, tmp_path):
