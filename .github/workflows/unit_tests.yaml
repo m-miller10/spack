@@ -55,7 +55,7 @@ jobs:
               cmake bison libbison-dev kcov
     - name: Install Python packages
       run: |
-          pip install --upgrade pip setuptools pytest pytest-xdist pytest-cov
+          pip install --upgrade pip setuptools pytest pytest-xdist pytest-cov clingo
           pip install --upgrade flake8 "isort>=4.3.5" "mypy>=0.900" "click" "black"
     - name: Setup git configuration
       run: |
@@ -69,8 +69,8 @@ jobs:
       run: |
           . share/spack/setup-env.sh
           spack bootstrap disable spack-install
-          spack bootstrap now
-          spack -v solve zlib
+          # FIXME (compiler as nodes): spack bootstrap now
+          # FIXME (compiler as nodes): spack -v solve zlib
     - name: Run unit tests
       env:
           SPACK_PYTHON: python
