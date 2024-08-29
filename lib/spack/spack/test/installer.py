@@ -449,7 +449,7 @@ def test_fake_install(install_mockery):
 #             spec = spack.spec.Spec("trivial-install-test-package%oneapi@=22.2.0").concretized()
 #             spec.package.do_install()
 #             assert (
-#                 spack.spec.CompilerSpec("oneapi@=22.2.0") in spack.compilers.all_compiler_specs()
+#                 spack.spec.CompilerSpec("oneapi@=22.2.0") in spack.compilers.all_compilers()
 #             )
 
 
